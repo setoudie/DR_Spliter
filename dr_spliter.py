@@ -1,149 +1,188 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import zipfile
 import re
 
-# Configuration de la page
+# ----------------------------------------------------------
+# 🖥️ CONFIGURATION DE LA PAGE
+# ----------------------------------------------------------
 st.set_page_config(
-    page_title="DR Spliter",
+    page_title="DRV Splitter",
     page_icon="📊",
-    layout="centered",
-    initial_sidebar_state="expanded"
+    layout="centered"
 )
 
-excel_img_link = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSjm9RgAqdYle_Plh0SHAKY6OA3LOhqxwguYQ&s"
-# Style CSS personnalisé
+# ----------------------------------------------------------
+# 🎨 CSS DESIGN (version améliorée)
+# ----------------------------------------------------------
 st.markdown("""
 <style>
     .header-title {
         color: #1e3a8a;
-        font-size: 2.5rem !important;
+        font-size: 3rem !important;
         text-align: center;
-        padding: 10px;
-        margin-bottom: 30px;
+        margin-bottom: 20px;
+        font-weight: 700;
+    }
+    .step-box {
+        background: #f3f4f6;
+        padding: 18px;
+        border-radius: 12px;
+        border-left: 6px solid #4f46e5;
+        margin-bottom: 20px;
     }
     .success-box {
         background-color: #d1fae5;
         border-radius: 10px;
         padding: 15px;
         margin: 15px 0;
+        border-left: 5px solid #059669;
     }
     .error-box {
         background-color: #fee2e2;
         border-radius: 10px;
         padding: 15px;
         margin: 15px 0;
+        border-left: 5px solid #dc2626;
     }
     .info-box {
-        background-color: #dbeafe;
+        background-color: #e0f2fe;
         border-radius: 10px;
         padding: 15px;
         margin: 15px 0;
+        border-left: 5px solid #0284c7;
     }
     .stDownloadButton>button {
         background-color: #4f46e5 !important;
         color: white !important;
         font-weight: bold;
-        border-radius: 8px;
-        padding: 10px 24px;
-        transition: all 0.3s;
+        border-radius: 10px;
+        padding: 12px 28px;
+        transition: 0.25s;
     }
     .stDownloadButton>button:hover {
         background-color: #3730a3 !important;
         transform: scale(1.05);
     }
-    .file-name {
-        font-style: italic;
-        word-break: break-all;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# Titre avec emojis et style
-st.markdown('<h1 class="header-title">✨ Séparation Excel par Zone DRV</h1>', unsafe_allow_html=True)
+# ----------------------------------------------------------
+# 🏷️ TITRE
+# ----------------------------------------------------------
+st.markdown('<h1 class="header-title">✨ DRV SPLITTER – Version Avancée</h1>', unsafe_allow_html=True)
 
-# Zone d'upload
-with st.container():
-    st.subheader("📤 Téléversement du Fichier")
-    uploaded_file = st.file_uploader(
-        "Glissez-déposez votre fichier Excel ici",
-        type=["xlsx"],
-        help="Format supporté: .xlsx (Excel)",
-        label_visibility="collapsed"
-    )
+# ----------------------------------------------------------
+# 📤 UPLOAD FICHIER
+# ----------------------------------------------------------
+uploaded_file = st.file_uploader(
+    "Téléverse ton fichier Excel (.xlsx)",
+    type=["xlsx"]
+)
 
-if uploaded_file:
+if not uploaded_file:
+    st.markdown('<div class="info-box">📌 En attente d’un fichier Excel…</div>', unsafe_allow_html=True)
+    st.stop()
+
+# ----------------------------------------------------------
+# 📄 LECTURE DES FEUILLES DU FICHIER
+# ----------------------------------------------------------
+try:
+    excel_file = pd.ExcelFile(uploaded_file)
+    sheet = st.selectbox("📄 Choisis la feuille sur laquelle travailler :", excel_file.sheet_names)
+
+    df = pd.read_excel(excel_file, sheet_name=sheet)
+
+    st.success(f"Feuille chargée : **{sheet}** ({len(df)} lignes)")
+
+except Exception as e:
+    st.markdown('<div class="error-box">❌ Impossible de lire le fichier.</div>', unsafe_allow_html=True)
+    st.exception(e)
+    st.stop()
+
+# ----------------------------------------------------------
+# 🔍 CHOIX DE LA COLONNE À SPLITTER
+# ----------------------------------------------------------
+column = st.selectbox(
+    "🔎 Sélectionne la colonne sur laquelle découper :",
+    df.columns
+)
+
+# ----------------------------------------------------------
+# 📦 CHOIX DU MODE DE SORTIE
+# ----------------------------------------------------------
+output_mode = st.radio(
+    "🗂️ Comment veux-tu recevoir le résultat ?",
+    [
+        "Un seul fichier Excel (plusieurs onglets)",
+        "Plusieurs fichiers Excel séparés (ZIP)"
+    ]
+)
+
+# ----------------------------------------------------------
+# 🚀 BOUTON DE TRAITEMENT
+# ----------------------------------------------------------
+if st.button("🚀 Lancer le Split"):
     try:
-        # Afficher les informations du fichier
-        file_details = st.expander("📝 Détails du fichier", expanded=True)
-        with file_details:
-            st.caption(f"**Nom du fichier:** <span class='file-name'>{uploaded_file.name}</span>",
-                       unsafe_allow_html=True)
-            st.caption(f"**Taille:** {(uploaded_file.size / 1024):.2f} KB")
+        grouped = df.groupby(column)
 
-        # Lecture du fichier
-        with st.spinner("🔍 Analyse du fichier en cours..."):
-            df = pd.read_excel(uploaded_file)
+        st.info(f"Découpage en **{len(grouped)} groupes**…")
 
-            if "zone_drvnew" not in df.columns:
-                st.markdown('<div class="error-box">❌ Colonne "zone_drvnew" introuvable dans le fichier</div>',
-                            unsafe_allow_html=True)
-                st.error("Vérifiez que votre fichier contient bien cette colonne")
-            else:
-                # Statistiques
-                zone_counts = df["zone_drvnew"].value_counts()
-                unique_zones = len(zone_counts)
+        # ------------------------------------------------------
+        # MODE 1 – UN SEUL FICHIER EXCEL AVEC FEUILLES
+        # ------------------------------------------------------
+        if output_mode == "Un seul fichier Excel (plusieurs onglets)":
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
-                st.markdown(f'<div class="success-box">✅ Fichier chargé avec succès!<br>'
-                            f'• Zones détectées: {unique_zones}<br>'
-                            f'• Lignes totales: {len(df)}</div>',
-                            unsafe_allow_html=True)
+                for name, group in grouped:
+                    sheet_name = re.sub(r'[\\/*?:\[\]]', '', str(name))[:31] or "inconnu"
+                    group.to_excel(writer, sheet_name=sheet_name, index=False)
 
-                # Traitement
-                with st.spinner("⚙️ Découpage des données par zone..."):
-                    grouped = df.groupby("zone_drvnew")
+            output.seek(0)
+            st.balloons()
+            st.download_button(
+                label="📥 Télécharger le fichier Excel",
+                data=output,
+                file_name=f"SPLIT_{column}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                        for name, group in grouped:
-                            # Nettoyage du nom de feuille
-                            sheet_name = re.sub(r'[\\/*?:\[\]]', '', str(name))
-                            sheet_name = sheet_name[:31] if name else "inconnu"
+        # ------------------------------------------------------
+        # MODE 2 – PLUSIEURS EXCEL DANS UN ZIP
+        # ------------------------------------------------------
+        else:
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                for name, group in grouped:
+                    clean_name = re.sub(r'[\\/*?:\[\]]', '', str(name)) or "inconnu"
+                    file_bytes = BytesIO()
+                    group.to_excel(file_bytes, index=False)
+                    file_bytes.seek(0)
+                    zipf.writestr(f"{clean_name}.xlsx", file_bytes.read())
 
-                            if sheet_name == "":
-                                sheet_name = "zone_vide"
-
-                            group.to_excel(writer, sheet_name=sheet_name, index=False)
-
-                    output.seek(0)
-
-                # Résultat
-                st.balloons()
-                st.markdown(f'<div class="success-box">✨ Traitement terminé!<br>'
-                            f'• Fichier découpé en {unique_zones} feuilles</div>',
-                            unsafe_allow_html=True)
-
-                # Bouton de téléchargement
-                st.download_button(
-                    label="📥 Télécharger le Fichier Séparé",
-                    data=output.getvalue(),
-                    file_name=f"ZONES_{uploaded_file.name}",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="Cliquez pour télécharger le fichier séparé par zones"
-                )
-
-                # Aperçu des données
-                st.subheader("👀 Aperçu des Données")
-                st.dataframe(df.head(5))
+            zip_buffer.seek(0)
+            st.balloons()
+            st.download_button(
+                label="📥 Télécharger le ZIP",
+                data=zip_buffer,
+                file_name=f"SPLIT_{column}.zip",
+                mime="application/zip"
+            )
 
     except Exception as e:
-        st.markdown(f'<div class="error-box">❌ Erreur de traitement</div>', unsafe_allow_html=True)
+        st.markdown('<div class="error-box">❌ Une erreur est survenue.</div>', unsafe_allow_html=True)
         st.exception(e)
-else:
-    st.markdown('<div class="info-box">📌 Veuillez téléverser un fichier Excel pour commencer</div>',
-                unsafe_allow_html=True)
-    # st.image(excel_img_link, width=300, caption="Séparateur de fichiers Excel par zones")
 
-# Pied de page
+# ----------------------------------------------------------
+# 👀 APERÇU DES DONNÉES
+# ----------------------------------------------------------
+st.markdown("### 👀 Aperçu des 5 premières lignes")
+st.dataframe(df.head())
+
+# ----------------------------------------------------------
+# FOOTER
+# ----------------------------------------------------------
 st.markdown("---")
-st.caption("Made with ❤️ by Seny for DIANKHA | v1.2")
+st.caption("Made with ❤️ by Seny for DIANKHA | v2.0 (Optimisé & Stylé)")
